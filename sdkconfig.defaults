@@ -1,0 +1,62 @@
+# Rust often needs a bit of an extra main task stack size compared to C (the default is 3K)
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=20000
+
+# Use this to set FreeRTOS kernel tick frequency to 1000 Hz (100 Hz by default).
+# This allows to use 1 ms granuality for thread sleeps (10 ms by default).
+# CONFIG_FREERTOS_HZ=1000
+
+# Workaround for https://github.com/espressif/esp-idf/issues/7631
+#CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=n
+#CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=n
+
+#CONFIG_SPIRAM_USE=SPIRAM_USE_MALLOC
+#CONFIG_SPIRAM_USE_MALLOC=y
+
+CONFIG_SPIRAM_TYPE_AUTO=y
+# CONFIG_SPIRAM_TYPE_ESPPSRAM16 is not set
+# CONFIG_SPIRAM_TYPE_ESPPSRAM32 is not set
+# CONFIG_SPIRAM_TYPE_ESPPSRAM64 is not set
+# CONFIG_SPIRAM_SPEED_40M=y
+# CONFIG_SPIRAM=y
+# CONFIG_ESP32_SPIRAM_SUPPORT=y
+# CONFIG_SPIRAM_BOOT_INIT is not set
+# CONFIG_SPIRAM_USE_MEMMAP is not set
+# CONFIG_SPIRAM_USE_CAPS_ALLOC is not set
+# CONFIG_SPIRAM_USE_MALLOC=y
+# CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+# CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=0
+# CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY is not set
+# CONFIG_SPIRAM_ALLOW_NOINIT_SEG_EXTERNAL_MEMORY is not set
+# CONFIG_SPIRAM_CACHE_WORKAROUND=y
+
+
+CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT=30000
+
+CONFIG_ESP_TASK_WDT_EN=n
+
+
+# enable external ram
+CONFIG_ESP32_SPIRAM_SUPPORT=y
+# auto detect type of ram
+CONFIG_SPIRAM_TYPE_AUTO=y
+
+# init external ram on boot
+CONFIG_SPIRAM_BOOT_INIT=y
+
+# test external memory presence on boot
+CONFIG_SPIRAM_MEMTEST=y
+
+# normal mallocs can use external memory
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+# for future releases. currently freertos always allocates memory from internal ram. I do not have control in tokio to change that
+# CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y
+
+# auto detect memory size
+CONFIG_SPIRAM_SIZE=-1
+
+# reserve more than available to prefer external memory over internal memory
+# CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=402400
+# always prefer external memory
+# CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0
+
