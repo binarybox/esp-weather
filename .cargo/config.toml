@@ -5,8 +5,8 @@ target = "riscv32imac-esp-espidf"
 linker = "ldproxy"
 runner = "espflash flash --monitor --baud=921600"
 rustflags = [
-    "--cfg",
-    "mio_unsupported_force_poll_poll",
+    # "--cfg",
+    # "mio_unsupported_force_poll_poll",
     "--cfg",
     "espidf_time64",
 ]
