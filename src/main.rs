@@ -26,8 +26,8 @@ use esp_weather::{
     wifi,
 };
 
-const SSID: &str = "WIFI";
-const PASS: &str = "PASSWORD";
+const SSID: &str = env!("SSID");
+const PASS: &str = env!("PASS");
 
 use epd_waveshare::epd7in5b_v2::Display7in5 as Display;
 use epd_waveshare::epd7in5b_v2::Epd7in5 as Epd;
@@ -220,13 +220,13 @@ fn request_weather(
 ) -> anyhow::Result<WeatherForecast> {
     // Prepare headers and URL
     let headers = [("Accept", "application/json")];
-    let url = "https://wttr.in/Frankfurt?format=j1";
+    let url = format!("https://wttr.in/{}?format=j1", env!("LOCATION"));
 
     // Send request
     //
     // Note: If you don't want to pass in any headers, you can also use `client.get(url, headers)`.
     log::info!("starting request");
-    let request = client.request(embedded_svc::http::Method::Get, url, &headers)?;
+    let request = client.request(embedded_svc::http::Method::Get, url.as_str(), &headers)?;
     let mut response = request.submit()?;
 
     // Process response

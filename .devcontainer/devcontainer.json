@@ -12,7 +12,9 @@
   },
   // https://github.com/serialport/serialport-rs/issues/153
   "runArgs": [
-    "--privileged"
+    "--privileged",
+    "--env-file",
+    ".devcontainer/wifi.env"
   ],
   "mounts": [
     {
