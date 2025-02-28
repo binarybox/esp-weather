@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use chrono::{Datelike, Days, NaiveTime};
+use chrono::{Datelike, Days, NaiveTime, Timelike};
 use embedded_graphics::{
     prelude::*,
     primitives::{Line, PrimitiveStyle},
@@ -21,7 +21,7 @@ use esp_idf_svc::{
 };
 use esp_weather::{
     constants::{DISPLAY_HEIGHT, DISPLAY_WIDTH, SECTION_WIDTH},
-    text::write_centered_text,
+    text::{draw_weather_icon, write_centered_text},
     weather::{write_single_weather, WeatherForecast},
     wifi,
 };
@@ -31,7 +31,14 @@ const PASS: &str = env!("PASS");
 
 use epd_waveshare::epd7in5b_v2::Display7in5 as Display;
 use epd_waveshare::epd7in5b_v2::Epd7in5 as Epd;
-use u8g2_fonts::fonts::u8g2_font_helvB10_tr;
+use u8g2_fonts::{
+    fonts::{
+        u8g2_font_helvB10_tr, u8g2_font_helvR08_tf, u8g2_font_helvR08_tr,
+        u8g2_font_unifont_t_weather,
+    },
+    types::{FontColor, VerticalPosition},
+    FontRenderer,
+};
 
 const SPI_FREQUENCY: u32 = 5_000_000;
 
@@ -135,16 +142,9 @@ fn main() {
                     today.as_str(),
                 );
 
-                let height = 50;
-
                 weather
                     .weather
                     .sort_by(|a, b| a.date.value().cmp(&b.date.value()));
-
-                Line::new(Point::new(0, DISPLAY_HEIGHT as i32), Point::new(0, height))
-                    .into_styled(PrimitiveStyle::with_stroke(TriColor::Black, 1))
-                    .draw(display.as_mut())
-                    .unwrap();
 
                 write_single_weather(
                     0,
@@ -153,41 +153,221 @@ fn main() {
                     &weather,
                 );
 
-                Line::new(
-                    Point::new((SECTION_WIDTH) - 1, DISPLAY_HEIGHT as i32),
-                    Point::new((SECTION_WIDTH) - 1, height),
-                )
-                .into_styled(PrimitiveStyle::with_stroke(TriColor::Black, 2))
-                .draw(display.as_mut())
-                .unwrap();
-                // tomorrow
                 write_single_weather(
                     1,
                     &chrono::Local::now().weekday().succ().to_string(),
                     display.as_mut(),
                     &weather,
                 );
-                Line::new(
-                    Point::new((SECTION_WIDTH * 2) - 1, DISPLAY_HEIGHT as i32),
-                    Point::new((SECTION_WIDTH * 2) - 1, height),
-                )
-                .into_styled(PrimitiveStyle::with_stroke(TriColor::Black, 2))
-                .draw(display.as_mut())
-                .unwrap();
-                // tomorrow + 1
+
                 write_single_weather(
                     2,
                     &chrono::Local::now().weekday().succ().succ().to_string(),
                     display.as_mut(),
                     &weather,
                 );
-                Line::new(
-                    Point::new((SECTION_WIDTH * 3) - 1, DISPLAY_HEIGHT as i32),
-                    Point::new((SECTION_WIDTH * 3) - 1, height),
-                )
-                .into_styled(PrimitiveStyle::with_stroke(TriColor::Black, 1))
-                .draw(display.as_mut())
-                .unwrap();
+
+                let mut last_rain_point = Point::zero();
+                let mut last_temp_point = Point::zero();
+
+                for i in 0..3 {
+                    let mut day = weather.weather[i].clone();
+                    day.hourly.sort_by(|a, b| a.time.0.cmp(&b.time.0));
+                    let font = FontRenderer::new::<u8g2_font_helvR08_tr>();
+
+                    FontRenderer::new::<u8g2_font_unifont_t_weather>()
+                        .render_aligned(
+                            String::from_utf8([49].to_vec()).unwrap().as_str(),
+                            Point::new(0, DISPLAY_HEIGHT as i32 - 160),
+                            VerticalPosition::Center,
+                            u8g2_fonts::types::HorizontalAlignment::Left,
+                            FontColor::Transparent(TriColor::Black),
+                            display.as_mut(),
+                        )
+                        .unwrap();
+                    font.render_aligned(
+                        "C",
+                        Point::new(18, DISPLAY_HEIGHT as i32 - 165),
+                        VerticalPosition::Center,
+                        u8g2_fonts::types::HorizontalAlignment::Left,
+                        FontColor::Transparent(TriColor::Black),
+                        display.as_mut(),
+                    )
+                    .unwrap();
+
+                    // temperature graph
+                    for (idx_day, day) in day.hourly.iter().enumerate() {
+                        let temperature = day.temperature.value() + 10;
+
+                        // temperature
+                        let current_point = Point::new(
+                            (i as i32 * SECTION_WIDTH) + (idx_day as i32 * 33) + 33,
+                            DISPLAY_HEIGHT as i32 - 135 - temperature,
+                        );
+
+                        let text_position = current_point - Point::new(0, 10);
+
+                        let font = FontRenderer::new::<u8g2_font_helvR08_tf>();
+
+                        font.render_aligned(
+                            format!("{:?}", day.temperature.value()).as_str(),
+                            text_position,
+                            VerticalPosition::Center,
+                            u8g2_fonts::types::HorizontalAlignment::Center,
+                            FontColor::Transparent(TriColor::Black),
+                            display.as_mut(),
+                        )
+                        .unwrap();
+
+                        if last_temp_point == Point::zero() {
+                            last_temp_point = current_point;
+                            continue;
+                        }
+
+                        Line::new(last_temp_point, current_point)
+                            .into_styled(PrimitiveStyle::with_stroke(TriColor::Black, 1))
+                            .draw(display.as_mut())
+                            .unwrap();
+
+                        last_temp_point = current_point;
+                    }
+
+                    // rain
+
+                    FontRenderer::new::<u8g2_font_unifont_t_weather>()
+                        .render_aligned(
+                            String::from_utf8([55].to_vec()).unwrap().as_str(),
+                            Point::new(0, DISPLAY_HEIGHT as i32 - 110),
+                            VerticalPosition::Center,
+                            u8g2_fonts::types::HorizontalAlignment::Left,
+                            FontColor::Transparent(TriColor::Chromatic),
+                            display.as_mut(),
+                        )
+                        .unwrap();
+                    font.render_aligned(
+                        "%",
+                        Point::new(18, DISPLAY_HEIGHT as i32 - 115),
+                        VerticalPosition::Center,
+                        u8g2_fonts::types::HorizontalAlignment::Left,
+                        FontColor::Transparent(TriColor::Chromatic),
+                        display.as_mut(),
+                    )
+                    .unwrap();
+
+                    FontRenderer::new::<u8g2_font_unifont_t_weather>()
+                        .render_aligned(
+                            String::from_utf8([55].to_vec()).unwrap().as_str(),
+                            Point::new(0, DISPLAY_HEIGHT as i32 - 90),
+                            VerticalPosition::Center,
+                            u8g2_fonts::types::HorizontalAlignment::Left,
+                            FontColor::Transparent(TriColor::Black),
+                            display.as_mut(),
+                        )
+                        .unwrap();
+                    font.render_aligned(
+                        "mm",
+                        Point::new(18, DISPLAY_HEIGHT as i32 - 95),
+                        VerticalPosition::Center,
+                        u8g2_fonts::types::HorizontalAlignment::Left,
+                        FontColor::Transparent(TriColor::Black),
+                        display.as_mut(),
+                    )
+                    .unwrap();
+
+                    // rain graph
+                    for (idx_day, day) in day.hourly.iter().enumerate() {
+                        if day.precipaction.value() <= 0.0 {
+                            continue;
+                        }
+                        let rain_precipation = (day.precipaction.value() * 10.0) as i32;
+
+                        let x = (i as i32 * SECTION_WIDTH) + (idx_day as i32 * 33) + 33;
+                        let y = DISPLAY_HEIGHT as i32 - 75;
+                        // rain probability
+                        let current_point = Point::new(x, y - rain_precipation);
+
+                        Line::new(Point::new(x, y), current_point)
+                            .into_styled(PrimitiveStyle::with_stroke(TriColor::Black, 34))
+                            .draw(display.as_mut())
+                            .unwrap();
+
+                        font.render_aligned(
+                            format!("{:?}", day.precipaction.value()).as_str(),
+                            Point::new(x, y - rain_precipation - 10),
+                            VerticalPosition::Center,
+                            u8g2_fonts::types::HorizontalAlignment::Center,
+                            FontColor::Transparent(TriColor::Black),
+                            display.as_mut(),
+                        )
+                        .unwrap();
+                    }
+                    for (idx_day, day) in day.hourly.iter().enumerate() {
+                        let rain_probability = (day.chance_of_rain.value() as i32) / 2;
+                        if last_rain_point == Point::zero() {
+                            last_rain_point = Point::new(
+                                (i as i32 * SECTION_WIDTH) + (idx_day as i32 * 33) + 33,
+                                DISPLAY_HEIGHT as i32 - 75 - rain_probability,
+                            );
+                            continue;
+                        }
+                        // rain probability
+                        let current_point = Point::new(
+                            (i as i32 * SECTION_WIDTH) + (idx_day as i32 * 33) + 33,
+                            DISPLAY_HEIGHT as i32 - 75 - rain_probability,
+                        );
+
+                        Line::new(last_rain_point, current_point)
+                            .into_styled(PrimitiveStyle::with_stroke(TriColor::Chromatic, 1))
+                            .draw(display.as_mut())
+                            .unwrap();
+
+                        last_rain_point = current_point;
+                    }
+
+                    // sunrist and sunset
+                    let astronomy = day.astronomy.first().unwrap();
+                    let sunrise =
+                        astronomy.sunrise.0.hour() * 11 + (astronomy.sunrise.0.minute() / 11) + 16;
+                    let sunset =
+                        astronomy.sunset.0.hour() * 11 + (astronomy.sunset.0.minute() / 11) + 16;
+                    let sunrise = Point::new(
+                        sunrise as i32 + (i as i32 * SECTION_WIDTH),
+                        DISPLAY_HEIGHT as i32 - 50,
+                    );
+                    let sunset = Point::new(
+                        sunset as i32 + (i as i32 * SECTION_WIDTH),
+                        DISPLAY_HEIGHT as i32 - 50,
+                    );
+
+                    Line::new(sunrise, sunset)
+                        .into_styled(PrimitiveStyle::with_stroke(TriColor::Chromatic, 2))
+                        .draw(display.as_mut())
+                        .unwrap();
+
+                    for (idx_day, hour) in day.hourly.iter().enumerate() {
+                        // hours
+                        let text = hour.time.0.hour().to_string();
+                        font.render_aligned(
+                            text.as_str(),
+                            Point::new(
+                                (i as i32 * SECTION_WIDTH) + (idx_day as i32 * 33) + 16,
+                                DISPLAY_HEIGHT as i32 - 35,
+                            ),
+                            VerticalPosition::Bottom,
+                            u8g2_fonts::types::HorizontalAlignment::Center,
+                            FontColor::Transparent(TriColor::Black),
+                            display.as_mut(),
+                        )
+                        .unwrap();
+
+                        draw_weather_icon(
+                            display.as_mut(),
+                            (i as i32 * SECTION_WIDTH) + (idx_day as i32 * 33) + 16,
+                            DISPLAY_HEIGHT as i32 - 10,
+                            hour,
+                        );
+                    }
+                }
             }
         };
 

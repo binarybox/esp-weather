@@ -3,7 +3,7 @@ target = "riscv32imac-esp-espidf"
 
 [target.riscv32imac-esp-espidf]
 linker = "ldproxy"
-runner = "espflash flash --monitor --baud=921600"
+runner = "espflash flash --monitor --baud=921600 --list-all-ports -p /dev/ttyACM0 "
 rustflags = [
     # "--cfg",
     # "mio_unsupported_force_poll_poll",

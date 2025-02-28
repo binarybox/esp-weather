@@ -24,7 +24,7 @@ pub fn write_centered_text<F: Font>(display: &mut Display, x: i32, y: i32, text:
     .unwrap();
 }
 
-pub(crate) fn write_labeld_text(
+pub fn write_labeld_text(
     display: &mut Display,
     x: i32,
     y: i32,

@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 
 use chrono::{NaiveDate, NaiveTime};
+
 use serde::Deserialize;
 
 use epd_waveshare::epd7in5b_v2::Display7in5 as Display;
@@ -8,7 +9,7 @@ use u8g2_fonts::fonts::{u8g2_font_helvB10_tr, u8g2_font_helvR08_tr};
 
 use crate::{
     constants::{HEIGHT, SECTION_WIDTH},
-    text::{draw_weather_icon, write_centered_text, write_labeld_text},
+    text::write_centered_text,
 };
 
 #[derive(Deserialize, Debug, Clone)]
@@ -56,7 +57,7 @@ impl SunHour {
 
 impl Debug for SunHour {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let hours = self.0.round() as u32;
+        let hours = self.0.floor() as u32;
         let minutes = (self.0.fract() * 60.0) as u32;
         f.write_str(format!("{} hour {} minutes", hours, minutes).as_str())
     }
@@ -103,10 +104,16 @@ impl DayTime {
 impl TryFrom<String> for DayTime {
     type Error = anyhow::Error;
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        Ok(DayTime(NaiveTime::parse_from_str(
-            value.as_str(),
-            "%H:%M %p",
-        )?))
+        let hours = value.split(" ").collect::<Vec<&str>>();
+        let am_pm = hours[1];
+        let hours = hours[0].split(":").collect::<Vec<&str>>();
+        let minutes = hours[1].parse::<u32>().unwrap();
+        let mut hours = hours[0].parse::<u32>().unwrap();
+        if am_pm == "PM" {
+            hours += 12;
+        }
+
+        Ok(DayTime(NaiveTime::from_hms_opt(hours, minutes, 0).unwrap()))
     }
 }
 
@@ -181,6 +188,29 @@ impl Debug for Factor {
     }
 }
 
+#[derive(Deserialize, Clone)]
+#[serde(try_from = "String")]
+pub struct Millimeter(f32);
+
+impl Millimeter {
+    pub fn value(&self) -> f32 {
+        self.0
+    }
+}
+
+impl TryFrom<String> for Millimeter {
+    type Error = anyhow::Error;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Ok(Self(value.parse::<f32>()?))
+    }
+}
+
+impl Debug for Millimeter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(format!("{:.2} mm", self.0).as_str())
+    }
+}
+
 #[derive(Deserialize, Debug)]
 pub struct WeatherForecast {
     pub weather: Vec<WeatherDay>,
@@ -198,26 +228,26 @@ pub struct WeatherDay {
     #[serde(rename(deserialize = "date"))]
     pub date: Date,
     pub hourly: Vec<WeatherHour>,
+    pub astronomy: Vec<Astronomy>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct WeatherHour {
     #[serde(rename(deserialize = "chanceofrain"))]
     pub chance_of_rain: Factor,
+    #[serde(rename(deserialize = "precipMM"))]
+    pub precipaction: Millimeter,
     #[serde(rename(deserialize = "tempC"))]
     pub temperature: Temperature,
     #[serde(rename(deserialize = "weatherCode"))]
     pub weather_code: WeatherCode,
     #[serde(rename(deserialize = "time"))]
     pub time: Time,
-    // pub astronomy: Vec<Astronomy>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Astronomy {
-    #[serde(rename(deserialize = "sunrise"))]
     pub sunrise: DayTime,
-    #[serde(rename(deserialize = "sunset"))]
     pub sunset: DayTime,
 }
 
@@ -227,11 +257,10 @@ pub fn write_single_weather(
     display: &mut Display,
     weather: &WeatherForecast,
 ) {
-    let column_width = SECTION_WIDTH - 16;
     let x = (SECTION_WIDTH * (offset as i32)) + SECTION_WIDTH / 2;
     write_centered_text::<u8g2_font_helvB10_tr>(display, x, HEIGHT + 10, title);
 
-    let mut day = weather.weather[offset].clone();
+    let day = weather.weather[offset].clone();
 
     write_centered_text::<u8g2_font_helvR08_tr>(
         display,
@@ -239,79 +268,4 @@ pub fn write_single_weather(
         HEIGHT + 25,
         format!("{}", day.date.value().format("%e. %b %y")).as_str(),
     );
-
-    write_labeld_text(
-        display,
-        x,
-        HEIGHT + 50,
-        column_width,
-        "average temperature",
-        format!("{:?}", day.average_temperature).as_str(),
-    );
-    write_labeld_text(
-        display,
-        x,
-        HEIGHT + 65,
-        column_width,
-        "maximum temperature",
-        format!("{:?}", day.maximum_temperature).as_str(),
-    );
-    write_labeld_text(
-        display,
-        x,
-        HEIGHT + 80,
-        column_width,
-        "minimum temperature",
-        format!("{:?}", day.minimum_temperature).as_str(),
-    );
-    write_labeld_text(
-        display,
-        x,
-        HEIGHT + 95,
-        column_width,
-        "sun for",
-        format!("{:?}", day.sun_hour).as_str(),
-    );
-
-    day.hourly.sort_by(|a, b| a.time.0.cmp(&b.time.0));
-    for (idx, hour) in day.hourly.into_iter().enumerate() {
-        let height_offset = idx as i32 * (160 - 120);
-        let start_time = hour.time.value();
-        let end_time = start_time + chrono::TimeDelta::hours(3);
-        write_centered_text::<u8g2_font_helvR08_tr>(
-            display,
-            x,
-            HEIGHT + 115 + height_offset,
-            format!(
-                "{} - {}",
-                start_time.format("%H:%M"),
-                end_time.format("%H:%M"),
-            )
-            .as_str(),
-        );
-
-        draw_weather_icon(
-            display,
-            x + (column_width / 2) - 10,
-            HEIGHT + 115 + height_offset,
-            &hour,
-        );
-
-        write_labeld_text(
-            display,
-            x,
-            HEIGHT + 130 + height_offset,
-            column_width,
-            "temperature",
-            format!("{:?}", hour.temperature).as_str(),
-        );
-        write_labeld_text(
-            display,
-            x,
-            HEIGHT + 140 + height_offset,
-            column_width,
-            "rain chance",
-            format!("{:?}", hour.chance_of_rain).as_str(),
-        );
-    }
 }
