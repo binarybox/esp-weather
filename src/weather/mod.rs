@@ -2,9 +2,9 @@ use std::fmt::Debug;
 
 use chrono::{NaiveDate, NaiveTime};
 
+use embedded_graphics::prelude::DrawTarget;
 use serde::Deserialize;
 
-use epd_waveshare::epd7in5b_v2::Display7in5 as Display;
 use u8g2_fonts::fonts::{u8g2_font_helvB10_tr, u8g2_font_helvR08_tr};
 
 use crate::{
@@ -211,7 +211,7 @@ impl Debug for Millimeter {
     }
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Default)]
 pub struct WeatherForecast {
     pub weather: Vec<WeatherDay>,
 }
@@ -251,18 +251,21 @@ pub struct Astronomy {
     pub sunset: DayTime,
 }
 
-pub fn write_single_weather(
+pub fn write_single_weather<Display>(
     offset: usize,
     title: &str,
     display: &mut Display,
     weather: &WeatherForecast,
-) {
+) where
+    Display: embedded_graphics::draw_target::DrawTarget<Color = epd_waveshare::color::TriColor>,
+    <Display as embedded_graphics::draw_target::DrawTarget>::Error: std::fmt::Debug,
+{
     let x = (SECTION_WIDTH * (offset as i32)) + SECTION_WIDTH / 2;
-    write_centered_text::<u8g2_font_helvB10_tr>(display, x, HEIGHT + 10, title);
+    write_centered_text::<u8g2_font_helvB10_tr, Display>(display, x, HEIGHT + 10, title);
 
     let day = weather.weather[offset].clone();
 
-    write_centered_text::<u8g2_font_helvR08_tr>(
+    write_centered_text::<u8g2_font_helvR08_tr, Display>(
         display,
         x,
         HEIGHT + 25,

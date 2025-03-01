@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{thread::sleep, time::Duration};
 
 use chrono::{Datelike, Days, NaiveTime, Timelike};
 use embedded_graphics::{
@@ -6,6 +6,7 @@ use embedded_graphics::{
     primitives::{Line, PrimitiveStyle},
 };
 use epd_waveshare::{color::TriColor, prelude::WaveshareDisplay};
+#[cfg(target_os = "espidf")]
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     hal::{
@@ -16,14 +17,14 @@ use esp_idf_svc::{
         spi::config::{Config, DriverConfig},
         units::Hertz,
     },
-    http::client::EspHttpConnection,
     sntp::{EspSntp, SyncStatus},
 };
+#[cfg(target_os = "espidf")]
+use esp_weather::wifi;
 use esp_weather::{
-    constants::{DISPLAY_HEIGHT, DISPLAY_WIDTH, SECTION_WIDTH},
+    constants::{self, DISPLAY_HEIGHT, DISPLAY_WIDTH, SECTION_WIDTH},
     text::{draw_weather_icon, write_centered_text},
     weather::{write_single_weather, WeatherForecast},
-    wifi,
 };
 
 const SSID: &str = env!("SSID");
@@ -43,83 +44,51 @@ use u8g2_fonts::{
 const SPI_FREQUENCY: u32 = 5_000_000;
 
 fn main() {
-    // It is necessary to call this function once. Otherwise some patches to the runtime
-    // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
-    esp_idf_svc::sys::link_patches();
+    #[cfg(target_os = "espidf")]
+    {
+        // It is necessary to call this function once. Otherwise some patches to the runtime
+        // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
+        esp_idf_svc::sys::link_patches();
 
-    // Bind the log crate to the ESP Logging facilities
-    esp_idf_svc::log::EspLogger::initialize_default();
+        // Bind the log crate to the ESP Logging facilities
+        esp_idf_svc::log::EspLogger::initialize_default();
 
-    let config = esp_idf_svc::sys::esp_vfs_eventfd_config_t { max_fds: 1 };
-    esp_idf_svc::sys::esp! { unsafe { esp_idf_svc::sys::esp_vfs_eventfd_register(&config) } }
-        .unwrap();
-
-    log::info!("STARTED");
-
-    let sysloop = EspSystemEventLoop::take().unwrap();
-
-    let modem = unsafe { WifiModem::new() };
-
-    let (_wifi, _) = wifi::wifi(modem, sysloop, SSID, PASS).unwrap();
-
-    let peripherals = Peripherals::take().unwrap();
-    let ntp = Box::new(EspSntp::new_default().unwrap());
-
-    while ntp.get_sync_status() != SyncStatus::Completed {
-        std::thread::sleep(Duration::from_millis(200));
-    }
-
-    // setup display
-    let spi = peripherals.spi2;
-    let sclk = peripherals.pins.gpio21.downgrade_output();
-    let sdin = peripherals.pins.gpio19.downgrade_output();
-    let cs = peripherals.pins.gpio18.downgrade_output();
-
-    let driver_config = DriverConfig::default();
-    let config = Config {
-        baudrate: Hertz(SPI_FREQUENCY),
-        // bit_order: BitOrder::MsbFirst,
-        // write_only: true,
-        ..Default::default()
-    };
-
-    let spi_driver =
-        esp_idf_svc::hal::spi::SpiDriver::new(spi, sclk, sdin, AnyInputPin::none(), &driver_config)
+        let config = esp_idf_svc::sys::esp_vfs_eventfd_config_t { max_fds: 1 };
+        esp_idf_svc::sys::esp! { unsafe { esp_idf_svc::sys::esp_vfs_eventfd_register(&config) } }
             .unwrap();
 
-    let mut spi =
-        esp_idf_svc::hal::spi::SpiDeviceDriver::new(spi_driver, Some(cs), &config).unwrap();
+        log::info!("STARTED");
 
-    let mut pwr = PinDriver::input_output(peripherals.pins.gpio0).unwrap();
-    pwr.set_high().unwrap();
+        let sysloop = EspSystemEventLoop::take().unwrap();
 
-    let busy = PinDriver::input(peripherals.pins.gpio1.downgrade_input()).unwrap();
-    let rst = PinDriver::input_output(peripherals.pins.gpio2.downgrade()).unwrap();
-    let dc = PinDriver::input_output(peripherals.pins.gpio3.downgrade()).unwrap();
+        let modem = unsafe { WifiModem::new() };
+        let (_wifi, _) = wifi::wifi(modem, sysloop, SSID, PASS).unwrap();
+    }
 
-    let mut delay = Delay::new_default();
-
-    let mut epd = Epd::new(&mut spi, busy, dc, rst, &mut delay, None).unwrap();
-
-    // setup epd done
-
-    let config = esp_idf_svc::http::client::Configuration {
-        crt_bundle_attach: Some(esp_idf_svc::sys::esp_crt_bundle_attach),
-        ..Default::default()
-    };
-    let connection = esp_idf_svc::http::client::EspHttpConnection::new(&config).unwrap();
-
-    let mut client = embedded_svc::http::client::Client::wrap(connection);
+    #[cfg(target_os = "linux")]
+    {
+        tracing_subscriber::fmt().pretty().init();
+    }
 
     let mut display = Box::new(Display::default());
+
+    let mut display = Box::new(
+        embedded_graphics_simulator::SimulatorDisplay::<TriColor>::new(Size::new(
+            constants::DISPLAY_WIDTH,
+            constants::DISPLAY_HEIGHT,
+        )),
+    );
     display.clear(TriColor::White).unwrap();
     loop {
-        match request_weather(&mut client) {
+        match request_weather() {
             Err(err) => {
                 {
                     // center the error message
                     let error = err.to_string();
-                    write_centered_text::<u8g2_font_helvB10_tr>(
+                    write_centered_text::<
+                        u8g2_font_helvB10_tr,
+                        embedded_graphics_simulator::SimulatorDisplay<TriColor>,
+                    >(
                         display.as_mut(),
                         DISPLAY_WIDTH as i32 / 2,
                         DISPLAY_HEIGHT as i32 / 2,
@@ -135,7 +104,10 @@ fn main() {
                 // write the day
                 let today = chrono::Local::now();
                 let today = format!("{}", today.format("%e. %b %y"));
-                write_centered_text::<u8g2_font_helvB10_tr>(
+                write_centered_text::<
+                    u8g2_font_helvB10_tr,
+                    embedded_graphics_simulator::SimulatorDisplay<TriColor>,
+                >(
                     display.as_mut(),
                     DISPLAY_WIDTH as i32 / 2,
                     30,
@@ -371,61 +343,156 @@ fn main() {
             }
         };
 
-        epd.update_and_display_frame(&mut spi, display.buffer(), &mut delay)
+        #[cfg(target_os = "espidf")]
+        {
+            let peripherals = Peripherals::take().unwrap();
+            let ntp = Box::new(EspSntp::new_default().unwrap());
+
+            while ntp.get_sync_status() != SyncStatus::Completed {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+
+            // setup display
+            let spi = peripherals.spi2;
+            let sclk = peripherals.pins.gpio21.downgrade_output();
+            let sdin = peripherals.pins.gpio19.downgrade_output();
+            let cs = peripherals.pins.gpio18.downgrade_output();
+
+            let driver_config = DriverConfig::default();
+            let config = Config {
+                baudrate: Hertz(SPI_FREQUENCY),
+                // bit_order: BitOrder::MsbFirst,
+                // write_only: true,
+                ..Default::default()
+            };
+
+            let spi_driver = esp_idf_svc::hal::spi::SpiDriver::new(
+                spi,
+                sclk,
+                sdin,
+                AnyInputPin::none(),
+                &driver_config,
+            )
             .unwrap();
 
-        log::info!("finished drawing");
+            let mut spi =
+                esp_idf_svc::hal::spi::SpiDeviceDriver::new(spi_driver, Some(cs), &config).unwrap();
 
-        epd.sleep(&mut spi, &mut delay).unwrap();
+            let mut pwr = PinDriver::input_output(peripherals.pins.gpio0).unwrap();
+            pwr.set_high().unwrap();
 
-        log::info!("going to sleep for ");
+            let busy = PinDriver::input(peripherals.pins.gpio1.downgrade_input()).unwrap();
+            let rst = PinDriver::input_output(peripherals.pins.gpio2.downgrade()).unwrap();
+            let dc = PinDriver::input_output(peripherals.pins.gpio3.downgrade()).unwrap();
 
-        let tomorrow = chrono::Local::now()
-            .checked_add_days(Days::new(1))
-            .unwrap()
-            .with_time(NaiveTime::default())
-            .unwrap();
+            let mut delay = Delay::new_default();
 
-        let until_tomorrow_time = tomorrow.signed_duration_since(chrono::Local::now());
+            let mut epd = Epd::new(&mut spi, busy, dc, rst, &mut delay, None).unwrap();
+            epd.update_and_display_frame(&mut spi, display.buffer(), &mut delay)
+                .unwrap();
 
-        log::warn!("sleeping not for {}", until_tomorrow_time.to_string());
-        unsafe {
-            esp_idf_svc::sys::esp_deep_sleep(until_tomorrow_time.num_microseconds().unwrap() as u64)
-        };
+            log::info!("finished drawing");
+
+            epd.sleep(&mut spi, &mut delay).unwrap();
+
+            log::info!("going to sleep for ");
+
+            let tomorrow = chrono::Local::now()
+                .checked_add_days(Days::new(1))
+                .unwrap()
+                .with_time(NaiveTime::default())
+                .unwrap();
+
+            let until_tomorrow_time = tomorrow.signed_duration_since(chrono::Local::now());
+
+            log::warn!("sleeping not for {}", until_tomorrow_time.to_string());
+            unsafe {
+                esp_idf_svc::sys::esp_deep_sleep(
+                    until_tomorrow_time.num_microseconds().unwrap() as u64
+                )
+            };
+        }
+        #[cfg(target_os = "linux")]
+        {
+            log::info!("write to display");
+            let output_settings = embedded_graphics_simulator::OutputSettingsBuilder::new()
+                .scale(4)
+                .build();
+            embedded_graphics_simulator::Window::new("Hello World", &output_settings)
+                .show_static(&display);
+            sleep(Duration::from_secs(100));
+        }
     }
 }
 
-fn request_weather(
-    client: &mut embedded_svc::http::client::Client<EspHttpConnection>,
-) -> anyhow::Result<WeatherForecast> {
-    // Prepare headers and URL
-    let headers = [("Accept", "application/json")];
+#[derive(thiserror::Error, Debug)]
+enum WeatherError {
+    #[error("Got no weather")]
+    NoWeather,
+}
+
+fn request_weather() -> anyhow::Result<WeatherForecast> {
+    let result;
     let url = format!("https://wttr.in/{}?format=j1", env!("LOCATION"));
 
-    // Send request
-    //
-    // Note: If you don't want to pass in any headers, you can also use `client.get(url, headers)`.
-    log::info!("starting request");
-    let request = client.request(embedded_svc::http::Method::Get, url.as_str(), &headers)?;
-    let mut response = request.submit()?;
+    #[cfg(target_os = "espidf")]
+    {
+        // setup epd done
+        let config = esp_idf_svc::http::client::Configuration {
+            crt_bundle_attach: Some(esp_idf_svc::sys::esp_crt_bundle_attach),
+            ..Default::default()
+        };
+        let connection = esp_idf_svc::http::client::EspHttpConnection::new(&config).unwrap();
 
-    // Process response
-    let status = response.status();
-    log::info!("status: {status}");
+        let mut client = embedded_svc::http::client::Client::wrap(connection);
+        // Prepare headers and URL
+        let headers = [("Accept", "application/json")];
+        let url = format!("https://wttr.in/{}?format=j1", env!("LOCATION"));
 
-    let _size = response
-        .header("content-length")
-        .unwrap_or_default()
-        .parse::<usize>()?;
+        // Send request
+        //
+        // Note: If you don't want to pass in any headers, you can also use `client.get(url, headers)`.
+        log::info!("starting request");
+        let request = client.request(embedded_svc::http::Method::Get, url.as_str(), &headers)?;
+        let mut response = request.submit()?;
 
-    let mut buffer = Box::new([0u8; 1 << 16]);
+        // Process response
+        let status = response.status();
+        log::info!("status: {status}");
 
-    let bytes_read = response.read(buffer.as_mut())?;
+        let _size = response
+            .header("content-length")
+            .unwrap_or_default()
+            .parse::<usize>()?;
 
-    let string = std::str::from_utf8(&buffer[0..bytes_read])?;
-    // log::info!("string: {:?}", string);
+        let mut buffer = Box::new([0u8; 1 << 16]);
 
-    let result = serde_json::from_str::<WeatherForecast>(string)?;
+        let bytes_read = response.read(buffer.as_mut())?;
 
-    Ok(result)
+        let string = std::str::from_utf8(&buffer[0..bytes_read])?;
+        // log::info!("string: {:?}", string);
+
+        result = Some(serde_json::from_str::<WeatherForecast>(string)?);
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let json = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let result = reqwest::get(url).await;
+                log::info!("result: {:?}", result);
+                result.unwrap().text().await.unwrap()
+            });
+
+        result = Some(serde_json::from_str::<WeatherForecast>(&json)?);
+    }
+
+    if let Some(result) = result {
+        Ok(result)
+    } else {
+        Err(anyhow::Error::new(WeatherError::NoWeather))
+    }
 }

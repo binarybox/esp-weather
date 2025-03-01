@@ -1,7 +1,6 @@
 use chrono::NaiveTime;
 use embedded_graphics::prelude::Point;
 use epd_waveshare::color::TriColor;
-use epd_waveshare::epd7in5b_v2::Display7in5 as Display;
 use u8g2_fonts::{
     fonts::{u8g2_font_helvR08_tr, u8g2_font_unifont_t_weather},
     types::{FontColor, HorizontalAlignment, VerticalPosition},
@@ -10,7 +9,11 @@ use u8g2_fonts::{
 
 use crate::weather::WeatherHour;
 
-pub fn write_centered_text<F: Font>(display: &mut Display, x: i32, y: i32, text: &str) {
+pub fn write_centered_text<F: Font, Display>(display: &mut Display, x: i32, y: i32, text: &str)
+where
+    Display: embedded_graphics::draw_target::DrawTarget<Color = epd_waveshare::color::TriColor>,
+    <Display as embedded_graphics::draw_target::DrawTarget>::Error: std::fmt::Debug,
+{
     let font = FontRenderer::new::<F>();
 
     font.render_aligned(
@@ -24,14 +27,17 @@ pub fn write_centered_text<F: Font>(display: &mut Display, x: i32, y: i32, text:
     .unwrap();
 }
 
-pub fn write_labeld_text(
+pub fn write_labeld_text<Display>(
     display: &mut Display,
     x: i32,
     y: i32,
     width: i32,
     label: &str,
     text: &str,
-) {
+) where
+    Display: embedded_graphics::draw_target::DrawTarget<Color = epd_waveshare::color::TriColor>,
+    <Display as embedded_graphics::draw_target::DrawTarget>::Error: std::fmt::Debug,
+{
     let font = FontRenderer::new::<u8g2_font_helvR08_tr>();
     font.render_aligned(
         label,
@@ -54,7 +60,11 @@ pub fn write_labeld_text(
     .unwrap();
 }
 
-pub fn draw_weather_icon(display: &mut Display, x: i32, y: i32, hour: &WeatherHour) {
+pub fn draw_weather_icon<Display>(display: &mut Display, x: i32, y: i32, hour: &WeatherHour)
+where
+    Display: embedded_graphics::draw_target::DrawTarget<Color = epd_waveshare::color::TriColor>,
+    <Display as embedded_graphics::draw_target::DrawTarget>::Error: std::fmt::Debug,
+{
     if hour.time.0 > NaiveTime::from_hms_opt(8, 0, 0).unwrap()
         && hour.time.0 < NaiveTime::from_hms_opt(20, 0, 0).unwrap()
     {
