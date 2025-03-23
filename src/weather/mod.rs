@@ -1,20 +1,16 @@
 use std::fmt::Debug;
 
-use chrono::{NaiveDate, NaiveTime};
+use chrono::{NaiveDate, NaiveDateTime};
 
-use embedded_graphics::prelude::DrawTarget;
+use embedded_graphics::{image::ImageDrawable, prelude::Point};
+use epd_waveshare::color::TriColor;
 use serde::Deserialize;
 
-use u8g2_fonts::fonts::{u8g2_font_helvB10_tr, u8g2_font_helvR08_tr};
-
-use crate::{
-    constants::{HEIGHT, SECTION_WIDTH},
-    text::write_centered_text,
-};
+use crate::{icons::convert_rgb565_to_binary, image_tri_color::ImageTriColor};
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(try_from = "String")]
-pub struct Date(NaiveDate);
+pub struct Date(pub NaiveDate);
 impl Date {
     pub fn value(&self) -> NaiveDate {
         self.0
@@ -26,142 +22,123 @@ impl TryFrom<String> for Date {
         Ok(Date(NaiveDate::parse_from_str(&value, "%Y-%m-%d")?))
     }
 }
-#[derive(Deserialize, Clone)]
-#[serde(try_from = "String")]
-pub struct Temperature(i32);
-impl Temperature {
-    pub fn value(&self) -> i32 {
-        self.0
-    }
-}
-impl TryFrom<String> for Temperature {
-    type Error = anyhow::Error;
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        Ok(Temperature(value.parse::<i32>()?))
-    }
-}
-impl Debug for Temperature {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(format!("{} C", self.0).as_str())
-    }
-}
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Debug, Clone)]
 #[serde(try_from = "String")]
-pub struct SunHour(f32);
-impl SunHour {
-    pub fn value(&self) -> f32 {
+pub struct DateTime(pub NaiveDateTime);
+impl DateTime {
+    pub fn value(&self) -> NaiveDateTime {
         self.0
     }
 }
 
-impl Debug for SunHour {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let hours = self.0.floor() as u32;
-        let minutes = (self.0.fract() * 60.0) as u32;
-        f.write_str(format!("{} hour {} minutes", hours, minutes).as_str())
-    }
-}
-
-impl TryFrom<String> for SunHour {
+impl TryFrom<String> for DateTime {
     type Error = anyhow::Error;
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        Ok(Self(value.parse::<f32>()?))
+        Ok(DateTime(
+            NaiveDateTime::parse_from_str(&value, "%Y-%m-%dT%H:%M").unwrap(),
+        ))
     }
 }
 
 #[derive(Deserialize, Debug, Clone)]
-#[serde(try_from = "String")]
-pub struct Time(pub NaiveTime);
-impl Time {
-    pub fn value(&self) -> NaiveTime {
-        self.0
-    }
-}
-#[derive(Debug, thiserror::Error)]
-enum TimeError {
-    #[error("could not be parsed")]
-    NotParsed,
-}
-impl TryFrom<String> for Time {
-    type Error = anyhow::Error;
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        let time = value.parse::<u32>()?;
-        let time = NaiveTime::from_hms_opt(time / 100, 0, 0)
-            .ok_or(anyhow::Error::new(TimeError::NotParsed))?;
-        Ok(Time(time))
-    }
-}
-
-#[derive(Deserialize, Debug, Clone)]
-#[serde(try_from = "String")]
-pub struct DayTime(pub NaiveTime);
-impl DayTime {
-    pub fn value(&self) -> NaiveTime {
-        self.0
-    }
-}
-impl TryFrom<String> for DayTime {
-    type Error = anyhow::Error;
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        let hours = value.split(" ").collect::<Vec<&str>>();
-        let am_pm = hours[1];
-        let hours = hours[0].split(":").collect::<Vec<&str>>();
-        let minutes = hours[1].parse::<u32>().unwrap();
-        let mut hours = hours[0].parse::<u32>().unwrap();
-        if am_pm == "PM" {
-            hours += 12;
-        }
-
-        Ok(DayTime(NaiveTime::from_hms_opt(hours, minutes, 0).unwrap()))
-    }
-}
-
-#[derive(Deserialize, Debug, Clone)]
-#[serde(try_from = "String")]
+#[serde(try_from = "u32")]
 pub struct WeatherCode(u32);
 impl WeatherCode {
     pub fn value(&self) -> u32 {
         self.0
     }
-    pub fn to_day_icon(&self) -> Option<u8> {
-        match self.0 {
-            284 => Some(50),
-            113 => Some(51),
-            116 | 185 => Some(52),
-            119 | 122 => Some(53),
-            263 | 176 => Some(54),
-            293..320 | 353..377 | 386 | 389 | 266 | 281 => Some(55),
-            323..350 | 179 | 182 | 392 | 395 => Some(56),
-            200 => Some(57),
-            230 => Some(58),
-            143 | 248 | 260 => Some(59),
-            227 => Some(60),
-            _ => None,
+    pub fn to_clouded_icon(&self) -> (Vec<u8>, u32) {
+        let image = match self.0 {
+            3 | 4 => embedded_weather_icons::wi_cloudy_32x32(),
+            45 | 48 => embedded_weather_icons::wi_fog_32x32(),
+            51..56 => embedded_weather_icons::wi_raindrops_32x32(),
+            61..66 => embedded_weather_icons::wi_rain_32x32(),
+            66 | 67 => embedded_weather_icons::wi_rain_mix_32x32(),
+            71..77 => embedded_weather_icons::wi_snow_32x32(),
+            80..82 => embedded_weather_icons::wi_showers_32x32(),
+            85 | 86 => embedded_weather_icons::wi_snow_32x32(),
+            95..100 => embedded_weather_icons::wi_thunderstorm_32x32(),
+
+            _ => return (Vec::new(), 0),
         }
+        .unwrap();
+
+        (convert_rgb565_to_binary(image.image_data()), image.width())
     }
-    pub fn to_night_icon(&self) -> Option<u8> {
-        match self.0 {
-            284 => Some(50),
-            113 => Some(41),
-            116 | 185 => Some(52),
-            119 | 122 => Some(53),
-            263 | 176 => Some(54),
-            293..320 | 353..377 | 386 | 389 | 266 | 281 => Some(55),
-            323..350 | 179 | 182 | 392 | 395 => Some(56),
-            200 => Some(57),
-            230 => Some(58),
-            143 | 248 | 260 => Some(59),
-            227 => Some(60),
-            _ => None,
+    pub fn to_day_icon(&self) -> (Vec<u8>, u32) {
+        let image = match self.0 {
+            0..3 => embedded_weather_icons::wi_day_sunny_32x32(),
+            3 | 4 => embedded_weather_icons::wi_day_cloudy_32x32(),
+            45 | 48 => embedded_weather_icons::wi_day_fog_32x32(),
+            51..56 => embedded_weather_icons::wi_raindrops_32x32(),
+            61..66 => embedded_weather_icons::wi_day_rain_32x32(),
+            66 | 67 => embedded_weather_icons::wi_day_rain_mix_32x32(),
+            71..77 => embedded_weather_icons::wi_day_snow_32x32(),
+            80..82 => embedded_weather_icons::wi_day_showers_32x32(),
+            85 | 86 => embedded_weather_icons::wi_day_snow_32x32(),
+            95..100 => embedded_weather_icons::wi_day_thunderstorm_32x32(),
+
+            _ => return (Vec::new(), 0),
         }
+        .unwrap();
+
+        (convert_rgb565_to_binary(image.image_data()), image.width())
+    }
+    pub fn to_night_icon(&self) -> (Vec<u8>, u32) {
+        let image = match self.0 {
+            0..3 => embedded_weather_icons::wi_night_clear_32x32(),
+            3..9 => embedded_weather_icons::wi_night_cloudy_32x32(),
+            45 | 48 => embedded_weather_icons::wi_night_fog_32x32(),
+            51..56 => embedded_weather_icons::wi_raindrops_32x32(),
+            61..66 => embedded_weather_icons::wi_night_rain_32x32(),
+            66 | 67 => embedded_weather_icons::wi_night_rain_mix_32x32(),
+            71..77 => embedded_weather_icons::wi_night_snow_32x32(),
+            80..82 => embedded_weather_icons::wi_night_showers_32x32(),
+            85 | 86 => embedded_weather_icons::wi_night_snow_32x32(),
+            95..100 => embedded_weather_icons::wi_night_thunderstorm_32x32(),
+            _ => return (Vec::new(), 0),
+        }
+        .unwrap();
+
+        (convert_rgb565_to_binary(image.image_data()), image.width())
+    }
+
+    pub fn draw_icon<Display>(
+        &self,
+        display: &mut Display,
+        x: i32,
+        y: i32,
+        cloud_coverage: u32,
+        is_day: bool,
+    ) where
+        Display: embedded_graphics::draw_target::DrawTarget<Color = TriColor>,
+        <Display as embedded_graphics::draw_target::DrawTarget>::Error: std::fmt::Debug,
+    {
+        let (icon, width) = if cloud_coverage > 80 {
+            self.to_clouded_icon()
+        } else if is_day {
+            self.to_day_icon()
+        } else {
+            self.to_night_icon()
+        };
+
+        let raw_image = ImageTriColor {
+            background: TriColor::White,
+            color: TriColor::Black,
+            data: icon,
+            point: Point::new(x - 16, y),
+            width,
+        };
+
+        raw_image.draw(display).unwrap();
     }
 }
 
-impl TryFrom<String> for WeatherCode {
+impl TryFrom<u32> for WeatherCode {
     type Error = anyhow::Error;
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        Ok(Self(value.parse::<u32>()?))
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        Ok(Self(value))
     }
 }
 
@@ -213,62 +190,25 @@ impl Debug for Millimeter {
 
 #[derive(Deserialize, Debug, Default)]
 pub struct WeatherForecast {
-    pub weather: Vec<WeatherDay>,
-}
-#[derive(Deserialize, Debug, Clone)]
-pub struct WeatherDay {
-    #[serde(rename(deserialize = "avgtempC"))]
-    pub average_temperature: Temperature,
-    #[serde(rename(deserialize = "maxtempC"))]
-    pub maximum_temperature: Temperature,
-    #[serde(rename(deserialize = "mintempC"))]
-    pub minimum_temperature: Temperature,
-    #[serde(rename(deserialize = "sunHour"))]
-    pub sun_hour: SunHour,
-    #[serde(rename(deserialize = "date"))]
-    pub date: Date,
-    pub hourly: Vec<WeatherHour>,
-    pub astronomy: Vec<Astronomy>,
+    pub utc_offset_seconds: u32,
+    pub timezone: String,
+    pub timezone_abbreviation: String,
+    pub hourly: WeatherHourly,
+    pub daily: WeatherDaily,
 }
 
-#[derive(Deserialize, Debug, Clone)]
-pub struct WeatherHour {
-    #[serde(rename(deserialize = "chanceofrain"))]
-    pub chance_of_rain: Factor,
-    #[serde(rename(deserialize = "precipMM"))]
-    pub precipaction: Millimeter,
-    #[serde(rename(deserialize = "tempC"))]
-    pub temperature: Temperature,
-    #[serde(rename(deserialize = "weatherCode"))]
-    pub weather_code: WeatherCode,
-    #[serde(rename(deserialize = "time"))]
-    pub time: Time,
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct WeatherHourly {
+    pub time: Vec<DateTime>,
+    pub temperature_2m: Vec<f32>,
+    pub precipitation_probability: Vec<u32>,
+    pub precipitation: Vec<f32>,
+    pub weather_code: Vec<WeatherCode>,
+    pub cloud_cover: Vec<u32>,
 }
-
-#[derive(Deserialize, Debug, Clone)]
-pub struct Astronomy {
-    pub sunrise: DayTime,
-    pub sunset: DayTime,
-}
-
-pub fn write_single_weather<Display>(
-    offset: usize,
-    title: &str,
-    display: &mut Display,
-    weather: &WeatherForecast,
-) where
-    Display: embedded_graphics::draw_target::DrawTarget<Color = epd_waveshare::color::TriColor>,
-    <Display as embedded_graphics::draw_target::DrawTarget>::Error: std::fmt::Debug,
-{
-    let x = (SECTION_WIDTH * (offset as i32)) + SECTION_WIDTH / 2;
-    write_centered_text::<u8g2_font_helvB10_tr, Display>(display, x, HEIGHT + 10, title);
-
-    let day = weather.weather[offset].clone();
-
-    write_centered_text::<u8g2_font_helvR08_tr, Display>(
-        display,
-        x,
-        HEIGHT + 25,
-        format!("{}", day.date.value().format("%e. %b %y")).as_str(),
-    );
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct WeatherDaily {
+    pub time: Vec<Date>,
+    pub sunrise: Vec<DateTime>,
+    pub sunset: Vec<DateTime>,
 }

@@ -10,6 +10,9 @@
       "ESP_BOARD": "esp32c6"
     }
   },
+  "containerEnv": {
+    "EG_SIMULATOR_DUMP": "screenshot.png"
+  },
   // https://github.com/serialport/serialport-rs/issues/153
   "runArgs": [
     "--privileged",
