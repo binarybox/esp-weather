@@ -18,8 +18,7 @@ RUN apt-get update \
 
 # Set users
 RUN adduser --disabled-password --gecos "" -u 1000 ${CONTAINER_USER}
-RUN groupmod -g 986 uucp
-RUN usermod -aG uucp ${CONTAINER_USER}
+RUN usermod -aG $(getent group 27  | cut -d: -f1) ${CONTAINER_USER}
 USER ${CONTAINER_USER}
 WORKDIR /home/${CONTAINER_USER}
 
